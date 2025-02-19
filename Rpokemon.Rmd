@@ -1,0 +1,171 @@
+```{r}
+# Load required libraries
+library(dplyr)
+library(ggplot2)
+library(caret)
+library(randomForest)
+library(xgboost)
+
+```
+
+```{r}
+# Load the dataset
+pokemon_data <- read.csv("C:/Users/kchai/Downloads/pokemon.csv", stringsAsFactors = FALSE)
+```
+
+```{r}
+summary(pokemon_data$capture_rate)
+
+pokemon_data <- pokemon_data %>%
+  mutate(capture_rate = ifelse(capture_rate == "--", NA, capture_rate))
+
+nrow(pokemon_data)
+```
+```{r}
+unique(trimws(pokemon_data$capture_rate))
+
+```
+
+
+```{r}
+
+
+# Clean capture_rate: remove any parenthesized text and replace non-numeric entries with NA
+pokemon_data <- pokemon_data %>%
+  mutate(capture_rate = gsub("\\s*\\(.*\\)", "", capture_rate),
+         capture_rate = ifelse(trimws(capture_rate) %in% c("--", ""), NA, capture_rate),
+         capture_rate = as.integer(capture_rate),
+         generation   = as.integer(generation),
+         is_legendary = as.integer(is_legendary),
+         type1        = as.factor(type1),
+         type2        = as.factor(type2)
+         ) %>%
+  na.omit()
+
+# Encode categorical variables
+pokemon_data <- pokemon_data %>%
+  mutate(type1_encoded = as.integer(type1),
+         type2_encoded = as.integer(type2))
+
+# Create a new feature: base_total (if not already present)
+if(!"base_total" %in% names(pokemon_data)){
+  pokemon_data <- pokemon_data %>%
+    mutate(base_total = attack + defense + hp + sp_attack + sp_defense + speed)
+}
+
+
+
+summary(pokemon_data)
+
+```
+```{r}
+# Correlation analysis among base stats and capture_rate
+base_stats <- c("attack", "defense", "hp", "sp_attack", "sp_defense", "speed")
+corr_matrix <- cor(pokemon_data[, c(base_stats, "capture_rate")], use = "complete.obs")
+corrplot(corr_matrix, method = "color", type = "upper", addCoef.col= "black", tl.col = "black", tl.srt = 45)
+
+```
+
+
+```{r}
+# Scatter plots: use tidy evaluation with aes()
+for (stat in base_stats) {
+  p <- ggplot(pokemon_data, aes(x = .data[[stat]], y = capture_rate)) +
+    geom_point(alpha = 0.6) +
+    geom_smooth(method = "lm", se = FALSE, color = "red") +
+    labs(title = paste(stat, "vs Capture Rate"), x = stat, y = "Capture Rate") +
+    theme_minimal()
+  print(p)
+}
+
+
+```
+
+
+```{r}
+
+# Legendary vs non-legendary comparison
+legendary_stats <- colMeans(pokemon_data[pokemon_data$is_legendary == 1, base_stats])
+nonlegendary_stats <- colMeans(pokemon_data[pokemon_data$is_legendary == 0, base_stats])
+barplot(rbind(legendary_stats, nonlegendary_stats),
+beside = TRUE, col = c("blue", "red"),
+names.arg = base_stats, xlab = "Base Stat", ylab = "Mean Value",
+main = "Comparison of Base Stats (Legendary vs Non-Legendary)")
+legend("topright", legend = c("Legendary", "Non-Legendary"), fill = c("blue", "red"))
+```
+
+
+```{r}
+
+# Prepare data for modeling: use base_stats to predict is_legendary
+X <- pokemon_data[, base_stats]
+y <- pokemon_data$is_legendary
+
+# Split data into training and test sets
+set.seed(42)
+trainIndex <- createDataPartition(y, p = 0.8, list = FALSE)
+X_train <- X[trainIndex, ]
+X_test <- X[-trainIndex, ]
+y_train <- y[trainIndex]
+y_test <- y[-trainIndex]
+
+# Train a Random Forest model with default parameters
+rf_model <- randomForest(x = X_train, y = factor(y_train), importance = TRUE)
+# Plot variable importance
+varImpPlot(rf_model, main = "Random Forest Variable Importance")
+
+# Train an XGBoost model (using default parameters)
+xgb_model <- xgboost(data = as.matrix(X_train), label = y_train,
+                     nrounds = 100, objective = "binary:logistic", verbose = 0)
+
+# Make predictions on the test set
+y_pred_rf <- predict(rf_model, X_test)
+y_pred_xgb <- predict(xgb_model, as.matrix(X_test))
+y_pred_xgb <- ifelse(y_pred_xgb > 0.5, 1, 0)
+
+# Convert predictions and true labels to factors for evaluation
+levels <- c(0, 1)
+y_pred_rf <- factor(y_pred_rf, levels = levels)
+y_pred_xgb <- factor(y_pred_xgb, levels = levels)
+y_test <- factor(y_test, levels = levels)
+
+# Create confusion matrices
+cm_rf <- confusionMatrix(y_pred_rf, y_test, positive = "1")
+cm_xgb <- confusionMatrix(y_pred_xgb, y_test, positive = "1")
+print(cm_rf)
+print(cm_xgb)
+
+# ROC curve for XGBoost model evaluation
+roc_obj <- roc(as.numeric(as.character(y_test)), as.numeric(as.character(y_pred_xgb)))
+plot(roc_obj, main = "ROC Curve for XGBoost Model", col = "blue")
+auc_val <- auc(roc_obj)
+print(paste("AUC:", auc_val))
+
+
+```
+
+
+```{r}
+
+# Make predictions on test set
+y_pred_rf <- predict(rf_model, X_test)
+y_pred_xgb <- predict(xgb_model, as.matrix(X_test))
+y_pred_xgb <- ifelse(y_pred_xgb > 0.5, 1, 0)
+# Specify the levels explicitly
+levels <- c(0, 1)
+# Convert to factors with specified levels
+y_pred_rf <- factor(y_pred_rf, levels = levels)
+y_pred_xgb <- factor(y_pred_xgb, levels = levels)
+y_test <- factor(y_test, levels = levels)
+# Create confusion matrices
+14
+cm_rf <- confusionMatrix(y_pred_rf, y_test, positive = "1")
+print(cm_rf)
+```
+
+
+```{r}
+cm_xgb <- confusionMatrix(y_pred_xgb, y_test, positive = "1")
+print(cm_xgb)
+```
+
